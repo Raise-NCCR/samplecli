@@ -1,3 +1,6 @@
+use anyhow::{bail, ensure, Context, Result};
+use std::path::PathBuf;
+
 use clap::Clap;
 use std::fs::File;
 use std::io::{stdin, BufRead, BufReader};
@@ -17,7 +20,7 @@ struct Opts {
 
     // Formulas written in RPN
     #[clap(name = "FILE")]
-    formula_file: Option<String>,
+    formula_file: Option<PathBuf>,
 }
 
 struct RpnCalculator(bool);
@@ -27,12 +30,12 @@ impl RpnCalculator {
         Self(verbose)
     }
 
-    pub fn eval(&self, formula: &str) -> i32 {
+    pub fn eval(&self, formula: &str) -> Result<i32> {
         let mut tokens = formula.split_whitespace().rev().collect::<Vec<_>>();
         self.eval_inner(&mut tokens)
     }
 
-    fn eval_inner(&self, tokens: &mut Vec<&str>) -> i32 {
+    fn eval_inner(&self, tokens: &mut Vec<&str>) -> Result<i32> {
         let mut stack = Vec::new();
 
         while let Some(token) = tokens.pop() {
@@ -57,37 +60,62 @@ impl RpnCalculator {
             }
         }
 
-        if stack.len() == 1 {
-            stack[0]
-        } else {
-            panic!("invalid syntax")
-        }
+        ensure!(stack.len() == 1, "invalid syntax");
+
+        Ok(stack[0])
     }
 }
 
 fn main() {
-   let opts = Opts::parse();
+    let opts = Opts::parse();
 
-   if let Some(path) = opts.formula_file 
-   {
-       let f = File::open(path).unwrap();
-       let reader = BufReader::new(f);
+    if let Some(path) = opts.formula_file {
+        let f = File::open(path).unwrap();
+        let reader = BufReader::new(f);
         run(reader, opts.verbose);
-    }
-    else
-    {
+    } else {
         let stdin = stdin();
         let reader = stdin.lock();
         run(reader, opts.verbose);
     }
 }
 
-fn run<R: BufRead>(reader: R, verbose: bool) {
+fn run<R: BufRead>(reader: R, verbose: bool) -> Result<()> {
     let calc = RpnCalculator::new(verbose);
 
     for line in reader.lines() {
-        let line = line.unwrap();
-        let answer = calc.eval(&line);
-        println!("{}", answer);
+        let line = line?;
+        match calc.eval(&line) {
+            Ok(answer) => println!("{}", answer),
+            Err(e) => eprintln!("{:#?}", e),
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_ok() {
+        let calc = RpnCalculator::new(false);
+        assert_eq!(calc.eval("5"), 5);
+        assert_eq!(calc.eval("50"), 50);
+        assert_eq!(calc.eval("-50"), -50);
+
+        assert_eq!(calc.eval("2 3 +"), 5);
+        assert_eq!(calc.eval("2 3 *"), 6);
+        assert_eq!(calc.eval("2 3 -"), -1);
+        assert_eq!(calc.eval("2 3 /"), 0);
+        assert_eq!(calc.eval("2 3 %"), 2);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_ng() {
+        let calc = RpnCalculator::new(false);
+        calc.eval("1 1 ^");
     }
 }
